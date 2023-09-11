@@ -1,0 +1,165 @@
+// Seed for the random number generator.
+val seed = Val[Int]
+
+// XGBR hyperparameters.
+val e   = Val[Double]
+val md  = Val[Double]
+val mds  = Val[Double]
+val g  = Val[Double]
+val subsample = Val[Double]
+val mcw  = Val[Double]
+
+
+// Predictor selector.
+val fmc   = Val[Double]
+val prec30  = Val[Double]
+val prec7  = Val[Double]
+val prec  = Val[Double]
+val rh   = Val[Double]
+val temp30_media  = Val[Double]
+val temp30_moda  = Val[Double]
+val temp7_media   = Val[Double]
+val temp7_moda   = Val[Double]
+val temp_max   = Val[Double]
+val wind_max = Val[Double]
+val lm14   = Val[Double]
+val lm7   = Val[Double]
+val ls14   = Val[Double]
+val ls7   = Val[Double]
+val aspect = Val[Double]
+val elev   = Val[Double]
+val rough   = Val[Double]
+val slope   = Val[Double]
+val road = Val[Double]
+val pop_density   = Val[Double]
+val livestock   = Val[Double]
+val ecorregion   = Val[Double]
+val cci   = Val[Double]
+val real  = Val[Double]
+
+val accuracy = Val[Double]
+
+// Number of predictors for a given model fit. 
+val npredictors = Val[Double]
+
+val fold = Val[Double] 
+
+// The inner cross-validation loop takes a set of predictors and the msl as 
+// inputs and returns the R2 and number of predictors as outputs. Models fitted
+// inside the inner loop are cross-validated 10-times with 5-folds.
+val innerCVLoop = PythonTask(
+    script = workDirectory / "inner_cv_loop_xgbr_om_ignition.py",
+    //version = "3.11.0",
+    install = Seq("pip install -U scikit-learn", "pip install xgboost"),
+    libraries = Seq("pandas","numpy","scikit-learn","xgboost")
+) set (
+    resources += workDirectory / "folds/outcvloop_train_fold_1.csv",
+    inputs += ( 
+                
+                fmc.mapped,
+                prec30.mapped,
+                prec7.mapped,
+                prec.mapped,
+                rh.mapped,
+                temp30_media.mapped,
+                temp30_moda.mapped,
+                temp7_media.mapped,
+                temp7_moda.mapped,
+                temp_max.mapped,
+                wind_max.mapped,
+                lm14.mapped,
+                lm7.mapped,
+                ls14.mapped,
+                ls7.mapped,
+                aspect.mapped,
+                elev.mapped,
+                rough.mapped,
+                slope.mapped,
+                road.mapped,
+                pop_density.mapped,
+                livestock.mapped,
+                ecorregion.mapped,
+                cci.mapped,
+                real.mapped,
+            
+                e.mapped,
+                md.mapped,
+                mcw.mapped,
+                mds.mapped, 
+                g.mapped, 
+                subsample.mapped,  
+                seed.mapped
+                ),
+
+    outputs += (accuracy mapped "accuracy",
+                npredictors mapped "npredictors")
+)
+
+val env = LocalEnvironment(8)
+val vm121 = SSHEnvironment(
+    "ubuntu",
+    "192.168.250.121",
+    16 // The number of cores you want to use on the remote server
+  )
+
+val atlas =  SLURMEnvironment(
+        "integratedmodelling",
+        "atlas-fdr.sw.ehu.es",
+        // optional parameters
+        partition = "serial",
+        time = 3 hour,
+        workDirectory = "/lscratch/integratedmodelling/om",
+        sharedDirectory = "/scratch/integratedmodelling/openmole/ignition.xgbr.training",
+        modules = Seq("Singularity/3.7.0-GCC-9.3.0")
+    ) 
+
+NSGA2Evolution(
+  evaluation = innerCVLoop,
+  parallelism = 120,
+  termination = 20000,
+  genome = Seq(
+    
+    // Predictors.  
+    fmc in List(0.0,1.0),
+    prec30 in List(0.0,1.0),
+    prec7 in List(0.0,1.0),
+    prec in List(0.0,1.0),
+    rh in List(0.0,1.0),
+    temp30_media in List(0.0,1.0),
+    temp30_moda in List(0.0,1.0),
+    temp7_media in List(0.0,1.0),
+    temp7_moda in List(0.0,1.0),
+    temp_max in List(0.0,1.0),
+    wind_max in List(0.0,1.0),
+    lm14 in List(0.0,1.0),
+    lm7 in List(0.0,1.0),
+    ls14 in List(0.0,1.0),
+    ls7 in List(0.0,1.0),
+    aspect in List(0.0,1.0),
+    elev in List(0.0,1.0),
+    rough in List(0.0,1.0),
+    slope in List(0.0,1.0),
+    road in List(0.0,1.0),
+    pop_density in List(0.0,1.0),
+    livestock in List(0.0,1.0),
+    ecorregion in List(0.0,1.0),
+    cci in List(0.0,1.0),
+    real in List(0.0,1.0),
+    
+    // XGBR hyperparameters.
+    e in (0.01,0.3),
+    md in List(3.0,4.0,5.0,6.0),
+    mcw in (1.0,10.0),
+    mds in (0.0,10.0),
+    g  in (0.0,10.0),
+    subsample in (0.6,1.0)
+    
+  ),
+  
+  objective = Seq(
+    npredictors,  
+    -accuracy
+  ),
+  
+  stochastic = Stochastic(seed = seed)
+) hook (workDirectory / "/results/tuning_results_fold_10", frequency = 500) on atlas
